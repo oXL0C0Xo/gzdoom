@@ -129,10 +129,6 @@ LONG			GameTitleFontHeight;
 LONG			DefaultGUIFontHeight;
 LONG			ErrorIconChar;
 
-FModule Kernel32Module{"Kernel32"};
-FModule Shell32Module{"Shell32"};
-FModule User32Module{"User32"};
-
 // PRIVATE DATA DEFINITIONS ------------------------------------------------
 
 static const WCHAR WinClassName[] = WGAMENAME "MainWindow";
@@ -278,46 +274,6 @@ void I_SetIWADInfo()
 
 //==========================================================================
 //
-// LConProc
-//
-// The main window's WndProc during startup. During gameplay, the WndProc
-// in i_input.cpp is used instead.
-//
-//==========================================================================
-
-LRESULT CALLBACK LConProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-	switch (msg)
-	{
-	case WM_CREATE:
-		// Create game title static control
-		return 0;
-
-	case WM_SIZE:
-		return 0;
-
-	case WM_DRAWITEM:
-		return FALSE;
-
-	case WM_COMMAND:
-		break;
-
-	case WM_CLOSE:
-		PostQuitMessage (0);
-		break;
-
-	case WM_DESTROY:
-		if (GameTitleFont != NULL)
-		{
-			DeleteObject (GameTitleFont);
-		}
-		break;
-	}
-	return DefWindowProc (hWnd, msg, wParam, lParam);
-}
-
-//==========================================================================
-//
 // ErrorPaneProc
 //
 // DialogProc for the error pane.
@@ -448,16 +404,6 @@ int DoMain (HINSTANCE hInstance)
 		Args->AppendArg(FString(wargv[i]));
 	}
 
-	// Load Win32 modules
-	Kernel32Module.Load({"kernel32.dll"});
-	Shell32Module.Load({"shell32.dll"});
-	User32Module.Load({"user32.dll"});
-
-	// Under XP, get our session ID so we can know when the user changes/locks sessions.
-	// Since we need to remain binary compatible with older versions of Windows, we
-	// need to extract the ProcessIdToSessionId function from kernel32.dll manually.
-	HMODULE kernel = GetModuleHandleA ("kernel32.dll");
-
 	//if (Args->CheckParm("-stdout")) // temporarily unconditional until we got our startup window back.
 	{
 		// As a GUI application, we don't normally get a console when we start.
@@ -493,29 +439,23 @@ int DoMain (HINSTANCE hInstance)
 				StdOut = GetStdHandle(STD_OUTPUT_HANDLE);
 			}
 
-			// These two functions do not exist in Windows XP.
-			BOOL (WINAPI* p_GetCurrentConsoleFontEx)(HANDLE hConsoleOutput, BOOL bMaximumWindow, PCONSOLE_FONT_INFOEX lpConsoleCurrentFontEx);
-			BOOL (WINAPI* p_SetCurrentConsoleFontEx)(HANDLE hConsoleOutput, BOOL bMaximumWindow, PCONSOLE_FONT_INFOEX lpConsoleCurrentFontEx);
-
-			p_SetCurrentConsoleFontEx = (decltype(p_SetCurrentConsoleFontEx))GetProcAddress(kernel, "SetCurrentConsoleFontEx");
-			p_GetCurrentConsoleFontEx = (decltype(p_GetCurrentConsoleFontEx))GetProcAddress(kernel, "GetCurrentConsoleFontEx");
-			if (p_SetCurrentConsoleFontEx && p_GetCurrentConsoleFontEx)
+			if (StdOut)
 			{
 				CONSOLE_FONT_INFOEX cfi;
 				cfi.cbSize = sizeof(cfi);
 
-				if (p_GetCurrentConsoleFontEx(StdOut, false, &cfi))
+				if (GetCurrentConsoleFontEx(StdOut, false, &cfi))
 				{
-					if (*cfi.FaceName == 0)	// If the face name is empty, the default (useless) raster font is actoive.
+					if (*cfi.FaceName == 0)	// If the face name is empty, the default (useless) raster font is active.
 					{
 						//cfi.dwFontSize = { 8, 14 };
 						wcscpy(cfi.FaceName, L"Lucida Console");
 						cfi.FontFamily = FF_DONTCARE;
-						p_SetCurrentConsoleFontEx(StdOut, false, &cfi);
+						SetCurrentConsoleFontEx(StdOut, false, &cfi);
 					}
 				}
+				FancyStdOut = true;
 			}
-			FancyStdOut = true;
 		}
 	}
 
@@ -530,7 +470,7 @@ int DoMain (HINSTANCE hInstance)
 
 	// Figure out what directory the program resides in.
 	WCHAR progbuff[1024];
-	if (GetModuleFileNameW(nullptr, progbuff, sizeof progbuff) == 0)
+	if (GetModuleFileNameW(nullptr, progbuff, sizeof (progbuff)-1) == 0)
 	{
 		MessageBoxA(nullptr, "Fatal", "Could not determine program location.", MB_ICONEXCLAMATION|MB_OK);
 		exit(-1);
@@ -566,7 +506,7 @@ int DoMain (HINSTANCE hInstance)
 
 	WNDCLASS WndClass;
 	WndClass.style			= 0;
-	WndClass.lpfnWndProc	= LConProc;
+	WndClass.lpfnWndProc	= WndProc;
 	WndClass.cbClsExtra		= 0;
 	WndClass.cbWndExtra		= 0;
 	WndClass.hInstance		= hInstance;
@@ -590,7 +530,7 @@ int DoMain (HINSTANCE hInstance)
 							 WS_EX_APPWINDOW,
 							 WinClassName,
 							 wcaption.c_str(),
-							 WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN,
+							 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
 							 x, y, width, height,
 							 (HWND)   NULL,
 							 (HMENU)  NULL,
@@ -603,30 +543,22 @@ int DoMain (HINSTANCE hInstance)
 		exit(-1);
 	}
 
-	if (kernel != NULL)
+	if (!ProcessIdToSessionId(GetCurrentProcessId(), &SessionID))
 	{
-		typedef BOOL (WINAPI *pts)(DWORD, DWORD *);
-		pts pidsid = (pts)GetProcAddress (kernel, "ProcessIdToSessionId");
-		if (pidsid != 0)
+		SessionID = 0;
+	}
+	hwtsapi32 = LoadLibraryA ("wtsapi32.dll");
+	if (hwtsapi32 != 0)
+	{
+		FARPROC reg = GetProcAddress (hwtsapi32, "WTSRegisterSessionNotification");
+		if (reg == 0 || !((BOOL(WINAPI *)(HWND, DWORD))reg) (Window, NOTIFY_FOR_THIS_SESSION))
 		{
-			if (!pidsid (GetCurrentProcessId(), &SessionID))
-			{
-				SessionID = 0;
-			}
-			hwtsapi32 = LoadLibraryA ("wtsapi32.dll");
-			if (hwtsapi32 != 0)
-			{
-				FARPROC reg = GetProcAddress (hwtsapi32, "WTSRegisterSessionNotification");
-				if (reg == 0 || !((BOOL(WINAPI *)(HWND, DWORD))reg) (Window, NOTIFY_FOR_THIS_SESSION))
-				{
-					FreeLibrary (hwtsapi32);
-					hwtsapi32 = 0;
-				}
-				else
-				{
-					atexit (UnWTS);
-				}
-			}
+			FreeLibrary (hwtsapi32);
+			hwtsapi32 = 0;
+		}
+		else
+		{
+			atexit (UnWTS);
 		}
 	}
 
@@ -646,7 +578,7 @@ int DoMain (HINSTANCE hInstance)
 	{
 		if (!batchrun)
 		{
-			if (FancyStdOut && !AttachedStdOut)
+			if (StdOut && FancyStdOut && !AttachedStdOut)
 			{ // Outputting to a new console window: Wait for a keypress before quitting.
 				DWORD bytes;
 				HANDLE stdinput = GetStdHandle(STD_INPUT_HANDLE);
