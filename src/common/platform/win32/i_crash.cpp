@@ -510,7 +510,7 @@ HANDLE WriteLogFile(HWND edit)
 //
 //==========================================================================
 
-void CreateCrashLog (const char *custominfo, DWORD customsize, HWND richlog)
+void CreateCrashLog (const char *custominfo, DWORD customsize)
 {
 	// Do not collect information more than once.
 	if (NumFiles != 0)
@@ -560,11 +560,13 @@ void CreateCrashLog (const char *custominfo, DWORD customsize, HWND richlog)
 			AddFile (file, "local.txt");
 		}
 	}
+#if 0
 	if (richlog != NULL)
 	{
 		I_FlushBufferedConsoleStuff();
 		AddFile (WriteLogFile(richlog), "log.rtf");
 	}
+#endif
 	CloseHandle (DbgProcess);
 }
 

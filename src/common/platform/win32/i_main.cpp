@@ -94,7 +94,7 @@
 // EXTERNAL FUNCTION PROTOTYPES --------------------------------------------
 
 LRESULT CALLBACK WndProc (HWND, UINT, WPARAM, LPARAM);
-void CreateCrashLog (const char *custominfo, DWORD customsize, HWND richedit);
+void CreateCrashLog (const char *custominfo, DWORD customsize);
 void DisplayCrashLog ();
 void I_FlushBufferedConsoleStuff();
 void DestroyCustomCursor();
@@ -120,14 +120,9 @@ HANDLE			MainThread;
 DWORD			MainThreadID;
 HANDLE			StdOut;
 bool			FancyStdOut, AttachedStdOut;
-bool			ConWindowHidden;
 
 // The main window
 HWND			Window;
-
-// The subwindows used for startup and error output
-HWND			ConWindow, GameTitleWindow;
-HWND			ErrorPane, ProgressBar, NetStartPane, StartupScreen, ErrorIcon;
 
 HFONT			GameTitleFont;
 LONG			GameTitleFontHeight;
@@ -266,60 +261,6 @@ int LayoutNetStartPane (HWND pane, int w)
 
 void LayoutMainWindow (HWND hWnd, HWND pane)
 {
-	RECT rect;
-	int errorpaneheight = 0;
-	int bannerheight = 0;
-	int progressheight = 0;
-	int netpaneheight = 0;
-	int leftside = 0;
-	int w, h;
-
-	GetClientRect (hWnd, &rect);
-	w = rect.right;
-	h = rect.bottom;
-
-	if (GameStartupInfo.Name.IsNotEmpty() && GameTitleWindow != NULL)
-	{
-		bannerheight = GameTitleFontHeight + 5;
-		MoveWindow (GameTitleWindow, 0, 0, w, bannerheight, TRUE);
-		InvalidateRect (GameTitleWindow, NULL, FALSE);
-	}
-	if (ProgressBar != NULL)
-	{
-		// Base the height of the progress bar on the height of a scroll bar
-		// arrow, just as in the progress bar example.
-		progressheight = GetSystemMetrics (SM_CYVSCROLL);
-		MoveWindow (ProgressBar, 0, h - progressheight, w, progressheight, TRUE);
-	}
-	if (NetStartPane != NULL)
-	{
-		netpaneheight = LayoutNetStartPane (NetStartPane, w);
-		SetWindowPos (NetStartPane, HWND_TOP, 0, h - progressheight - netpaneheight, w, netpaneheight, SWP_SHOWWINDOW);
-	}
-	if (pane != NULL)
-	{
-		errorpaneheight = LayoutErrorPane (pane, w);
-		SetWindowPos (pane, HWND_TOP, 0, h - progressheight - netpaneheight - errorpaneheight, w, errorpaneheight, 0);
-	}
-	if (ErrorIcon != NULL)
-	{
-		leftside = GetSystemMetrics (SM_CXICON) + 6;
-		MoveWindow (ErrorIcon, 0, bannerheight, leftside, h - bannerheight - errorpaneheight - progressheight - netpaneheight, TRUE);
-	}
-	// If there is a startup screen, it covers the log window
-	if (StartupScreen != NULL)
-	{
-		SetWindowPos (StartupScreen, HWND_TOP, leftside, bannerheight, w - leftside,
-			h - bannerheight - errorpaneheight - progressheight - netpaneheight, SWP_SHOWWINDOW);
-		InvalidateRect (StartupScreen, NULL, FALSE);
-		MoveWindow (ConWindow, 0, 0, 0, 0, TRUE);
-	}
-	else
-	{
-		// The log window uses whatever space is left.
-		MoveWindow (ConWindow, leftside, bannerheight, w - leftside,
-			h - bannerheight - errorpaneheight - progressheight - netpaneheight, TRUE);
-	}
 }
 
 
@@ -346,181 +287,19 @@ void I_SetIWADInfo()
 
 LRESULT CALLBACK LConProc (HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-	HWND view;
-	HDC hdc;
-	HBRUSH hbr;
-	HGDIOBJ oldfont;
-	RECT rect;
-	SIZE size;
-	LOGFONT lf;
-	TEXTMETRIC tm;
-	HINSTANCE inst = (HINSTANCE)(LONG_PTR)GetWindowLongPtr(hWnd, GWLP_HINSTANCE);
-	DRAWITEMSTRUCT *drawitem;
-	CHARFORMAT2W format;
-
 	switch (msg)
 	{
 	case WM_CREATE:
 		// Create game title static control
-		memset (&lf, 0, sizeof(lf));
-		hdc = GetDC (hWnd);
-		lf.lfHeight = -MulDiv(12, GetDeviceCaps(hdc, LOGPIXELSY), 72);
-		lf.lfCharSet = ANSI_CHARSET;
-		lf.lfWeight = FW_BOLD;
-		lf.lfPitchAndFamily = VARIABLE_PITCH | FF_ROMAN;
-		wcscpy (lf.lfFaceName, L"Trebuchet MS");
-		GameTitleFont = CreateFontIndirect (&lf);
-
-		oldfont = SelectObject (hdc, GetStockObject (DEFAULT_GUI_FONT));
-		GetTextMetrics (hdc, &tm);
-		DefaultGUIFontHeight = tm.tmHeight;
-		if (GameTitleFont == NULL)
-		{
-			GameTitleFontHeight = DefaultGUIFontHeight;
-		}
-		else
-		{
-			SelectObject (hdc, GameTitleFont);
-			GetTextMetrics (hdc, &tm);
-			GameTitleFontHeight = tm.tmHeight;
-		}
-		SelectObject (hdc, oldfont);
-
-		// Create log read-only edit control
-		view = CreateWindowExW (WS_EX_NOPARENTNOTIFY, L"RichEdit20W", nullptr,
-			WS_CHILD | WS_VISIBLE | WS_VSCROLL |
-			ES_LEFT | ES_MULTILINE | WS_CLIPSIBLINGS,
-			0, 0, 0, 0,
-			hWnd, NULL, inst, NULL);
-		HRESULT hr;
-		hr = GetLastError();
-		if (view == NULL)
-		{
-			ReleaseDC (hWnd, hdc);
-			return -1;
-		}
-		SendMessage (view, EM_SETREADONLY, TRUE, 0);
-		SendMessage (view, EM_EXLIMITTEXT, 0, 0x7FFFFFFE);
-		SendMessage (view, EM_SETBKGNDCOLOR, 0, RGB(70,70,70));
-		// Setup default font for the log.
-		//SendMessage (view, WM_SETFONT, (WPARAM)GetStockObject (DEFAULT_GUI_FONT), FALSE);
-		format.cbSize = sizeof(format);
-		format.dwMask = CFM_BOLD | CFM_COLOR | CFM_FACE | CFM_SIZE | CFM_CHARSET;
-		format.dwEffects = 0;
-		format.yHeight = 200;
-		format.crTextColor = RGB(223,223,223);
-		format.bCharSet = ANSI_CHARSET;
-		format.bPitchAndFamily = FF_SWISS | VARIABLE_PITCH;
-		wcscpy(format.szFaceName, L"DejaVu Sans");	// At least I have it. :p
-		SendMessageW(view, EM_SETCHARFORMAT, SCF_ALL, (LPARAM)&format);
-
-		ConWindow = view;
-		ReleaseDC (hWnd, hdc);
-
-		view = CreateWindowExW (WS_EX_NOPARENTNOTIFY, L"STATIC", NULL, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_OWNERDRAW, 0, 0, 0, 0, hWnd, nullptr, inst, nullptr);
-		if (view == nullptr)
-		{
-			return -1;
-		}
-		SetWindowLong (view, GWL_ID, IDC_STATIC_TITLE);
-		GameTitleWindow = view;
-
 		return 0;
 
 	case WM_SIZE:
-		if (wParam != SIZE_MAXHIDE && wParam != SIZE_MAXSHOW)
-		{
-			LayoutMainWindow (hWnd, ErrorPane);
-		}
 		return 0;
 
 	case WM_DRAWITEM:
-		// Draw title banner.
-		if (wParam == IDC_STATIC_TITLE && GameStartupInfo.Name.IsNotEmpty())
-		{
-			const PalEntry *c;
-
-			// Draw the game title strip at the top of the window.
-			drawitem = (LPDRAWITEMSTRUCT)lParam;
-
-			// Draw the background.
-			rect = drawitem->rcItem;
-			rect.bottom -= 1;
-			c = (const PalEntry *)&GameStartupInfo.BkColor;
-			hbr = CreateSolidBrush (RGB(c->r,c->g,c->b));
-			FillRect (drawitem->hDC, &drawitem->rcItem, hbr);
-			DeleteObject (hbr);
-
-			// Calculate width of the title string.
-			SetTextAlign (drawitem->hDC, TA_TOP);
-			oldfont = SelectObject (drawitem->hDC, GameTitleFont != NULL ? GameTitleFont : (HFONT)GetStockObject (DEFAULT_GUI_FONT));
-			auto widename = GameStartupInfo.Name.WideString();
-			GetTextExtentPoint32W (drawitem->hDC, widename.c_str(), (int)widename.length(), &size);
-
-			// Draw the title.
-			c = (const PalEntry *)&GameStartupInfo.FgColor;
-			SetTextColor (drawitem->hDC, RGB(c->r,c->g,c->b));
-			SetBkMode (drawitem->hDC, TRANSPARENT);
-			TextOutW (drawitem->hDC, rect.left + (rect.right - rect.left - size.cx) / 2, 2, widename.c_str(), (int)widename.length());
-			SelectObject (drawitem->hDC, oldfont);
-			return TRUE;
-		}
-		// Draw startup screen
-		else if (wParam == IDC_STATIC_STARTUP)
-		{
-			if (StartupScreen != NULL)
-			{
-				drawitem = (LPDRAWITEMSTRUCT)lParam;
-
-				rect = drawitem->rcItem;
-				// Windows expects DIBs to be bottom-up but ours is top-down,
-				// so flip it vertically while drawing it.
-				StretchDIBits (drawitem->hDC, rect.left, rect.bottom - 1, rect.right - rect.left, rect.top - rect.bottom,
-					0, 0, StartupBitmap->bmiHeader.biWidth, StartupBitmap->bmiHeader.biHeight,
-					ST_Util_BitsForBitmap(StartupBitmap), reinterpret_cast<const BITMAPINFO*>(StartupBitmap), DIB_RGB_COLORS, SRCCOPY);
-
-				// If the title banner is gone, then this is an ENDOOM screen, so draw a short prompt
-				// where the command prompt would have been in DOS.
-				if (GameTitleWindow == NULL)
-				{
-					auto quitmsg = WideString(GStrings("TXT_QUITENDOOM"));
-
-					SetTextColor (drawitem->hDC, RGB(240,240,240));
-					SetBkMode (drawitem->hDC, TRANSPARENT);
-					oldfont = SelectObject (drawitem->hDC, (HFONT)GetStockObject (DEFAULT_GUI_FONT));
-					TextOutW (drawitem->hDC, 3, drawitem->rcItem.bottom - DefaultGUIFontHeight - 3, quitmsg.c_str(), (int)quitmsg.length());
-					SelectObject (drawitem->hDC, oldfont);
-				}
-				return TRUE;
-			}
-		}
-		// Draw stop icon.
-		else if (wParam == IDC_ICONPIC)
-		{
-			HICON icon;
-			POINTL char_pos;
-			drawitem = (LPDRAWITEMSTRUCT)lParam;
-
-			// This background color should match the edit control's.
-			hbr = CreateSolidBrush (RGB(70,70,70));
-			FillRect (drawitem->hDC, &drawitem->rcItem, hbr);
-			DeleteObject (hbr);
-
-			// Draw the icon aligned with the first line of error text.
-			SendMessage (ConWindow, EM_POSFROMCHAR, (WPARAM)&char_pos, ErrorIconChar);
-			icon = (HICON)LoadImage (0, IDI_ERROR, IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED);
-			DrawIcon (drawitem->hDC, 6, char_pos.y, icon);
-			return TRUE;
-		}
 		return FALSE;
 
 	case WM_COMMAND:
-		if (ErrorIcon != NULL && (HWND)lParam == ConWindow && HIWORD(wParam) == EN_UPDATE)
-		{
-			// Be sure to redraw the error icon if the edit control changes.
-			InvalidateRect (ErrorIcon, NULL, TRUE);
-			return 0;
-		}
 		break;
 
 	case WM_CLOSE:
@@ -598,10 +377,6 @@ void I_SetWndProc()
 	{
 		SetWindowLongPtr (Window, GWLP_USERDATA, 1);
 		SetWindowLongPtr (Window, GWLP_WNDPROC, (WLONG_PTR)WndProc);
-		ShowWindow (ConWindow, SW_HIDE);
-		ShowWindow(ProgressBar, SW_HIDE);
-		ConWindowHidden = true;
-		ShowWindow (GameTitleWindow, SW_HIDE);
 		I_InitInput (Window);
 	}
 }
@@ -616,33 +391,6 @@ void I_SetWndProc()
 
 void RestoreConView()
 {
-	HDC screenDC = GetDC(0);
-	int dpi = GetDeviceCaps(screenDC, LOGPIXELSX);
-	ReleaseDC(0, screenDC);
-	int width = (512 * dpi + 96 / 2) / 96;
-	int height = (384 * dpi + 96 / 2) / 96;
-
-	// Make sure the window has a frame in case it was fullscreened.
-	SetWindowLongPtr (Window, GWL_STYLE, WS_VISIBLE|WS_OVERLAPPEDWINDOW);
-	if (GetWindowLong (Window, GWL_EXSTYLE) & WS_EX_TOPMOST)
-	{
-		SetWindowPos (Window, HWND_BOTTOM, 0, 0, width, height,
-			SWP_DRAWFRAME | SWP_NOCOPYBITS | SWP_NOMOVE);
-		SetWindowPos (Window, HWND_TOP, 0, 0, 0, 0, SWP_NOCOPYBITS | SWP_NOMOVE | SWP_NOSIZE);
-	}
-	else
-	{
-		SetWindowPos (Window, NULL, 0, 0, width, height,
-			SWP_DRAWFRAME | SWP_NOCOPYBITS | SWP_NOMOVE | SWP_NOZORDER);
-	}
-
-	SetWindowLongPtr (Window, GWLP_WNDPROC, (WLONG_PTR)LConProc);
-	ShowWindow (ConWindow, SW_SHOW);
-	ConWindowHidden = false;
-	ShowWindow (GameTitleWindow, SW_SHOW);
-	I_ShutdownInput ();		// Make sure the mouse pointer is available.
-	// Make sure the progress bar isn't visible.
-	DeleteStartupScreen();
 }
 
 //==========================================================================
@@ -657,98 +405,10 @@ void RestoreConView()
 void ShowErrorPane(const char *text)
 {
 	auto widetext = WideString(text);
-	if (Window == nullptr || ConWindow == nullptr)
-	{
-		if (text != NULL)
-		{
-			MessageBoxW (Window, widetext.c_str(),
-				WGAMENAME " Fatal Error", MB_OK|MB_ICONSTOP|MB_TASKMODAL);
-		}
-		return;
-	}
-
-	if (StartScreen != NULL)	// Ensure that the network pane is hidden.
-	{
-		StartScreen->NetDone();
-	}
 	if (text != NULL)
 	{
-		FStringf caption("Fatal Error - " GAMENAME " %s " X64 " (%s)", GetVersionString(), GetGitTime());
-		auto wcaption = caption.WideString();
-		SetWindowTextW (Window, wcaption.c_str());
-		ErrorIcon = CreateWindowExW (WS_EX_NOPARENTNOTIFY, L"STATIC", NULL, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | SS_OWNERDRAW, 0, 0, 0, 0, Window, NULL, g_hInst, NULL);
-		if (ErrorIcon != NULL)
-		{
-			SetWindowLong (ErrorIcon, GWL_ID, IDC_ICONPIC);
-		}
-	}
-	ErrorPane = CreateDialogParam (g_hInst, MAKEINTRESOURCE(IDD_ERRORPANE), Window, ErrorPaneProc, (LONG_PTR)NULL);
-
-	if (text != NULL)
-	{
-		CHARRANGE end;
-		CHARFORMAT2 oldformat, newformat;
-		PARAFORMAT2 paraformat;
-
-		// Append the error message to the log.
-		end.cpMax = end.cpMin = GetWindowTextLength (ConWindow);
-		SendMessage (ConWindow, EM_EXSETSEL, 0, (LPARAM)&end);
-
-		// Remember current charformat.
-		oldformat.cbSize = sizeof(oldformat);
-		SendMessage (ConWindow, EM_GETCHARFORMAT, SCF_SELECTION, (LPARAM)&oldformat);
-
-		// Use bigger font and standout colors.
-		newformat.cbSize = sizeof(newformat);
-		newformat.dwMask = CFM_BOLD | CFM_COLOR | CFM_SIZE;
-		newformat.dwEffects = CFE_BOLD;
-		newformat.yHeight = oldformat.yHeight * 5 / 4;
-		newformat.crTextColor = RGB(255,170,170);
-		SendMessage (ConWindow, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&newformat);
-
-		// Indent the rest of the text to make the error message stand out a little more.
-		paraformat.cbSize = sizeof(paraformat);
-		paraformat.dwMask = PFM_STARTINDENT | PFM_OFFSETINDENT | PFM_RIGHTINDENT;
-		paraformat.dxStartIndent = paraformat.dxOffset = paraformat.dxRightIndent = 120;
-		SendMessage (ConWindow, EM_SETPARAFORMAT, 0, (LPARAM)&paraformat);
-		SendMessageW (ConWindow, EM_REPLACESEL, FALSE, (LPARAM)L"\n");
-
-		// Find out where the error lines start for the error icon display control.
-		SendMessage (ConWindow, EM_EXGETSEL, 0, (LPARAM)&end);
-		ErrorIconChar = end.cpMax;
-
-		// Now start adding the actual error message.
-		SendMessageW (ConWindow, EM_REPLACESEL, FALSE, (LPARAM)L"Execution could not continue.\n\n");
-
-		// Restore old charformat but with light yellow text.
-		oldformat.crTextColor = RGB(255,255,170);
-		SendMessage (ConWindow, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&oldformat);
-
-		// Add the error text.
-		SendMessageW (ConWindow, EM_REPLACESEL, FALSE, (LPARAM)widetext.c_str());
-
-		// Make sure the error text is not scrolled below the window.
-		SendMessage (ConWindow, EM_LINESCROLL, 0, SendMessage (ConWindow, EM_GETLINECOUNT, 0, 0));
-		// The above line scrolled everything off the screen, so pretend to move the scroll
-		// bar thumb, which clamps to not show any extra lines if it doesn't need to.
-		SendMessage (ConWindow, EM_SCROLL, SB_PAGEDOWN, 0);
-	}
-
-	BOOL bRet;
-	MSG msg;
-
-	while ((bRet = GetMessage(&msg, NULL, 0, 0)) != 0)
-	{
-		if (bRet == -1)
-		{
-			MessageBoxW (Window, widetext.c_str(), WGAMENAME " Fatal Error", MB_OK|MB_ICONSTOP|MB_TASKMODAL);
-			return;
-		}
-		else if (!IsDialogMessage (ErrorPane, &msg))
-		{
-			TranslateMessage (&msg);
-			DispatchMessage (&msg);
-		}
+		MessageBoxW (Window, widetext.c_str(),
+			WGAMENAME " Fatal Error", MB_OK|MB_ICONSTOP|MB_TASKMODAL);
 	}
 }
 
@@ -798,7 +458,7 @@ int DoMain (HINSTANCE hInstance)
 	// need to extract the ProcessIdToSessionId function from kernel32.dll manually.
 	HMODULE kernel = GetModuleHandleA ("kernel32.dll");
 
-	if (Args->CheckParm("-stdout"))
+	//if (Args->CheckParm("-stdout")) // temporarily unconditional until we got our startup window back.
 	{
 		// As a GUI application, we don't normally get a console when we start.
 		// If we were run from the shell and are on XP+, we can attach to its
@@ -1122,7 +782,7 @@ LONG WINAPI CatchAllExceptions (LPEXCEPTION_POINTERS info)
 
 	CrashPointers = *info;
 	if (sysCallbacks.CrashInfo && custominfo) sysCallbacks.CrashInfo(custominfo, 16384, "\r\n");
-	CreateCrashLog (custominfo, (DWORD)strlen(custominfo), ConWindow);
+	CreateCrashLog (custominfo, (DWORD)strlen(custominfo));
 
 	// If the main thread crashed, then make it clean up after itself.
 	// Otherwise, put the crashing thread to sleep and signal the main thread to clean up.
@@ -1208,7 +868,7 @@ int WINAPI wWinMain (HINSTANCE hInstance, HINSTANCE nothing, LPWSTR cmdline, int
 			*(int *)0 = 0;
 		}
 		__except(CrashPointers = *GetExceptionInformation(),
-			CreateCrashLog ("TestCrash", 9, NULL), EXCEPTION_EXECUTE_HANDLER)
+			CreateCrashLog ("TestCrash", 9), EXCEPTION_EXECUTE_HANDLER)
 		{
 		}
 		DisplayCrashLog ();
@@ -1221,7 +881,7 @@ int WINAPI wWinMain (HINSTANCE hInstance, HINSTANCE nothing, LPWSTR cmdline, int
 			infiniterecursion(1);
 		}
 		__except(CrashPointers = *GetExceptionInformation(),
-			CreateCrashLog ("TestStackCrash", 14, NULL), EXCEPTION_EXECUTE_HANDLER)
+			CreateCrashLog ("TestStackCrash", 14), EXCEPTION_EXECUTE_HANDLER)
 		{
 		}
 		DisplayCrashLog ();

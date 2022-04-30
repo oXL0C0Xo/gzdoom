@@ -116,7 +116,7 @@ extern bool ToggleFullscreen;
 bool VidResizing;
 
 extern BOOL vidactive;
-extern HWND Window, ConWindow;
+extern HWND Window;
 
 EXTERN_CVAR (String, language)
 EXTERN_CVAR (Bool, lookstrafe)
