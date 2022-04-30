@@ -80,15 +80,6 @@
 #include "startupinfo.h"
 #include "printf.h"
 
-// MACROS ------------------------------------------------------------------
-
-// The main window's title.
-#ifdef _M_X64
-#define X64 " 64-bit"
-#else
-#define X64 ""
-#endif
-
 // TYPES -------------------------------------------------------------------
 
 // EXTERNAL FUNCTION PROTOTYPES --------------------------------------------
@@ -123,11 +114,6 @@ bool			FancyStdOut, AttachedStdOut;
 
 // The main window
 HWND			Window;
-
-HFONT			GameTitleFont;
-LONG			GameTitleFontHeight;
-LONG			DefaultGUIFontHeight;
-LONG			ErrorIconChar;
 
 // PRIVATE DATA DEFINITIONS ------------------------------------------------
 
@@ -174,80 +160,6 @@ static void UnWTS (void)
 
 //==========================================================================
 //
-// LayoutErrorPane
-//
-// Lays out the error pane to the desired width, returning the required
-// height.
-//
-//==========================================================================
-
-static int LayoutErrorPane (HWND pane, int w)
-{
-	HWND ctl, ctl_two;
-	RECT rectc, rectc_two;
-
-	// Right-align the Quit button.
-	ctl = GetDlgItem (pane, IDOK);
-	GetClientRect (ctl, &rectc);	// Find out how big it is.
-	MoveWindow (ctl, w - rectc.right - 1, 1, rectc.right, rectc.bottom, TRUE);
-
-	// Second-right-align the Restart button
-	ctl_two = GetDlgItem (pane, IDC_BUTTON1);
-	GetClientRect (ctl_two, &rectc_two);	// Find out how big it is.
-	MoveWindow (ctl_two, w - rectc.right - rectc_two.right - 2, 1, rectc.right, rectc.bottom, TRUE);
-
-	InvalidateRect (ctl, NULL, TRUE);
-	InvalidateRect (ctl_two, NULL, TRUE);
-
-	// Return the needed height for this layout
-	return rectc.bottom + 2;
-}
-
-//==========================================================================
-//
-// LayoutNetStartPane
-//
-// Lays out the network startup pane to the specified width, returning
-// its required height.
-//
-//==========================================================================
-
-int LayoutNetStartPane (HWND pane, int w)
-{
-	HWND ctl;
-	RECT margin, rectc;
-	int staticheight, barheight;
-
-	// Determine margin sizes.
-	SetRect (&margin, 7, 7, 0, 0);
-	MapDialogRect (pane, &margin);
-
-	// Stick the message text in the upper left corner.
-	ctl = GetDlgItem (pane, IDC_NETSTARTMESSAGE);
-	GetClientRect (ctl, &rectc);
-	MoveWindow (ctl, margin.left, margin.top, rectc.right, rectc.bottom, TRUE);
-
-	// Stick the count text in the upper right corner.
-	ctl = GetDlgItem (pane, IDC_NETSTARTCOUNT);
-	GetClientRect (ctl, &rectc);
-	MoveWindow (ctl, w - rectc.right - margin.left, margin.top, rectc.right, rectc.bottom, TRUE);
-	staticheight = rectc.bottom;
-
-	// Stretch the progress bar to fill the entire width.
-	ctl = GetDlgItem (pane, IDC_NETSTARTPROGRESS);
-	barheight = GetSystemMetrics (SM_CYVSCROLL);
-	MoveWindow (ctl, margin.left, margin.top*2 + staticheight, w - margin.left*2, barheight, TRUE);
-
-	// Center the abort button underneath the progress bar.
-	ctl = GetDlgItem (pane, IDCANCEL);
-	GetClientRect (ctl, &rectc);
-	MoveWindow (ctl, (w - rectc.right) / 2, margin.top*3 + staticheight + barheight, rectc.right, rectc.bottom, TRUE);
-
-	return margin.top*4 + staticheight + barheight + rectc.bottom;
-}
-
-//==========================================================================
-//
 // LayoutMainWindow
 //
 // Lays out the main window with the game title and log controls and
@@ -269,14 +181,10 @@ void LayoutMainWindow (HWND hWnd, HWND pane)
 void I_SetIWADInfo()
 {
 	// Make the startup banner show itself
-	LayoutMainWindow(Window, NULL);
 }
 
 //==========================================================================
 //
-// ErrorPaneProc
-//
-// DialogProc for the error pane.
 //
 //==========================================================================
 
@@ -292,30 +200,6 @@ void CheckForRestart()
 		ShellExecuteW(NULL, L"open", path, GetCommandLineW(), NULL, SW_SHOWNORMAL);
 	}
 	restartrequest = false;
-}
-
-INT_PTR CALLBACK ErrorPaneProc (HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-	switch (msg)
-	{
-	case WM_INITDIALOG:
-		// Appear in the main window.
-		LayoutMainWindow (GetParent (hDlg), hDlg);
-		return TRUE;
-
-	case WM_COMMAND:
-		if (HIWORD(wParam) == BN_CLICKED)
-		{
-			if (LOWORD(wParam) == IDC_BUTTON1) // we pressed the restart button, so run GZDoom again
-			{
-				restartrequest = true;
-			}
-			PostQuitMessage (0);
-			return TRUE;
-		}
-		break;
-	}
-	return FALSE;
 }
 
 //==========================================================================
@@ -524,7 +408,7 @@ int DoMain (HINSTANCE hInstance)
 	}
 
 	/* create window */
-	FStringf caption("" GAMENAME " %s " X64 " (%s)", GetVersionString(), GetGitTime());
+	FStringf caption("" GAMENAME " %s  (%s)", GetVersionString(), GetGitTime());
 	std::wstring wcaption = caption.WideString();
 	Window = CreateWindowExW(
 							 WS_EX_APPWINDOW,
@@ -567,8 +451,8 @@ int DoMain (HINSTANCE hInstance)
 	WinWidth = cRect.right;
 	WinHeight = cRect.bottom;
 
-	CoInitialize (NULL);
-	atexit (UnCOM);
+	if (CoInitialize (NULL))
+		atexit (UnCOM);
 
 	int ret = GameMain ();
 	CheckForRestart();
@@ -782,16 +666,6 @@ int WINAPI wWinMain (HINSTANCE hInstance, HINSTANCE nothing, LPWSTR cmdline, int
 
 	InitCommonControls ();			// Load some needed controls and be pretty under XP
 
-	// We need to load riched20.dll so that we can create the control.
-	if (NULL == LoadLibraryA ("riched20.dll"))
-	{
-		// This should only happen on basic Windows 95 installations, but since we
-		// don't support Windows 95, we have no obligation to provide assistance in
-		// getting it installed.
-		MessageBoxA(NULL, "Could not load riched20.dll", GAMENAME " Error", MB_OK | MB_ICONSTOP);
-		return 0;
-	}
-
 #if !defined(__GNUC__) && defined(_DEBUG)
 	if (__argc == 2 && __wargv != nullptr && wcscmp (__wargv[1], L"TestCrash") == 0)
 	{
@@ -872,7 +746,7 @@ void I_SetWindowTitle(const char* caption)
 	std::wstring widecaption;
 	if (!caption)
 	{
-		FStringf default_caption("" GAMENAME " %s " X64 " (%s)", GetVersionString(), GetGitTime());
+		FStringf default_caption("" GAMENAME " %s  (%s)", GetVersionString(), GetGitTime());
 		widecaption = default_caption.WideString();
 	}
 	else
