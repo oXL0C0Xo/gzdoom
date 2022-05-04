@@ -72,8 +72,7 @@ void LayoutMainWindow (HWND hWnd, HWND pane);
 int LayoutNetStartPane (HWND pane, int w);
 
 bool ST_Util_CreateStartupWindow ();
-void ST_Util_SizeWindowForBitmap (int scale);
-void ST_Util_InvalidateRect (HWND hwnd, BitmapInfo *bitmap_info, int left, int top, int right, int bottom);
+void ST_Util_SizeWindowForBitmap(int scale, BitmapInfo* StartupBitmap);
 
 // PUBLIC FUNCTION PROTOTYPES ----------------------------------------------
 
@@ -90,15 +89,31 @@ extern HWND Window, ConWindow, ProgressBar, NetStartPane, StartupScreen, GameTit
 
 FStartupScreen *StartScreen;
 
-CUSTOM_CVAR(Int, showendoom, 0, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
-{
-	if (self < 0) self = 0;
-	else if (self > 2) self=2;
-}
-
 // PRIVATE DATA DEFINITIONS ------------------------------------------------
 
 // CODE --------------------------------------------------------------------
+
+//==========================================================================
+//
+// ST_Util_InvalidateRect
+//
+// Invalidates the portion of the window that the specified rect of the
+// bitmap appears in.
+//
+//==========================================================================
+
+void ST_Util_InvalidateRect(BitmapInfo* bitmap_info, int left, int top, int right, int bottom)
+{
+	auto hwnd = StartupScreen;
+	RECT rect;
+
+	GetClientRect(hwnd, &rect);
+	rect.left = left * rect.right / bitmap_info->bmiHeader.biWidth - 1;
+	rect.top = top * rect.bottom / bitmap_info->bmiHeader.biHeight - 1;
+	rect.right = right * rect.right / bitmap_info->bmiHeader.biWidth + 1;
+	rect.bottom = bottom * rect.bottom / bitmap_info->bmiHeader.biHeight + 1;
+	InvalidateRect(hwnd, &rect, FALSE);
+}
 
 //==========================================================================
 //
@@ -111,34 +126,37 @@ CUSTOM_CVAR(Int, showendoom, 0, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 
 FStartupScreen *FStartupScreen::CreateInstance(int max_progress)
 {
-	FStartupScreen *scr = NULL;
-	HRESULT hr = -1;
+	int hr = -1;
+	FGraphicalStartupScreenRenderer* scr = nullptr;
 
 	if (!Args->CheckParm("-nostartup"))
 	{
-		if (GameStartupInfo.Type == FStartupInfo::HexenStartup)
+		if (ST_Util_CreateStartupWindow())
 		{
-			scr = new FHexenStartupScreen(max_progress, hr);
-		}
-		else if (GameStartupInfo.Type == FStartupInfo::HereticStartup)
-		{
-			scr = new FHereticStartupScreen(max_progress, hr);
-		}
-		else if (GameStartupInfo.Type == FStartupInfo::StrifeStartup)
-		{
-			scr = new FStrifeStartupScreen(max_progress, hr);
-		}
-		if (scr != NULL && FAILED(hr))
-		{
-			delete scr;
-			scr = NULL;
+			if (GameStartupInfo.Type == FStartupInfo::HexenStartup)
+			{
+				scr = new FHexenStartupScreen(max_progress, ST_Util_InvalidateRect, &hr);
+			}
+			else if (GameStartupInfo.Type == FStartupInfo::HereticStartup)
+			{
+				scr = new FHereticStartupScreen(max_progress, ST_Util_InvalidateRect, &hr);
+			}
+			else if (GameStartupInfo.Type == FStartupInfo::StrifeStartup)
+			{
+				scr = new FStrifeStartupScreen(max_progress, ST_Util_InvalidateRect, &hr);
+			}
+			if (scr != NULL && hr < 0)
+			{
+				delete scr;
+				scr = NULL;
+			}
 		}
 	}
 	if (scr == NULL)
 	{
-		scr = new FBasicStartupScreen(max_progress, true);
+		return new FBasicStartupScreen(max_progress, true);
 	}
-	return scr;
+	return new FGraphicalStartupScreen(max_progress, scr);
 }
 
 //==========================================================================
@@ -150,7 +168,7 @@ FStartupScreen *FStartupScreen::CreateInstance(int max_progress)
 //==========================================================================
 
 FBasicStartupScreen::FBasicStartupScreen(int max_progress, bool show_bar)
-: FStartupScreen(max_progress)
+: FStartupScreen()
 {
 	if (show_bar)
 	{
@@ -158,11 +176,14 @@ FBasicStartupScreen::FBasicStartupScreen(int max_progress, bool show_bar)
 			NULL, WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
 			0, 0, 0, 0,
 			Window, 0, g_hInst, NULL);
-		SendMessage (ProgressBar, PBM_SETRANGE, 0, MAKELPARAM(0,MaxPos));
+		SendMessage (ProgressBar, PBM_SETRANGE, 0, MAKELPARAM(0,max_progress));
 		LayoutMainWindow (Window, NULL);
 	}
+	MaxPos = max_progress;
+	CurPos = 0;
 	NetMaxPos = 0;
 	NetCurPos = 0;
+	NetMarqueeMode = 0;
 }
 
 //==========================================================================
@@ -434,9 +455,13 @@ static INT_PTR CALLBACK NetStartPaneProc (HWND hDlg, UINT msg, WPARAM wParam, LP
 //
 //==========================================================================
 
-FGraphicalStartupScreen::FGraphicalStartupScreen(int max_progress)
+FGraphicalStartupScreen::FGraphicalStartupScreen(int max_progress, FGraphicalStartupScreenRenderer* scr)
 : FBasicStartupScreen(max_progress, false)
 {
+	renderer = scr;
+	ST_Util_SizeWindowForBitmap(renderer->scale, renderer->StartupBitmap);
+	LayoutMainWindow(Window, NULL);
+	InvalidateRect(StartupScreen, NULL, TRUE);
 }
 
 //==========================================================================
@@ -452,50 +477,29 @@ FGraphicalStartupScreen::~FGraphicalStartupScreen()
 		DestroyWindow (StartupScreen);
 		StartupScreen = NULL;
 	}
-	if (StartupBitmap != NULL)
+	if (renderer != NULL)
 	{
-		ST_Util_FreeBitmap (StartupBitmap);
-		StartupBitmap = NULL;
+		delete renderer;
 	}
 }
 
-//==========================================================================
-//
-//
-//
-//==========================================================================
 
-void FHexenStartupScreen::SetWindowSize()
+void FGraphicalStartupScreen::NetInit(const char* message, int num_players)
 {
-	ST_Util_SizeWindowForBitmap(1);
-	LayoutMainWindow(Window, NULL);
-	InvalidateRect(StartupScreen, NULL, TRUE);
+	renderer->NetInit(num_players);
+	Super::NetInit(message, num_players);
 }
 
-//==========================================================================
-//
-//
-//
-//==========================================================================
-
-void FHereticStartupScreen::SetWindowSize()
+void FGraphicalStartupScreen::NetProgress(int count)
 {
-	ST_Util_SizeWindowForBitmap(1);
-	LayoutMainWindow(Window, NULL);
-	InvalidateRect(StartupScreen, NULL, TRUE);
+	renderer->NetProgress(count);
+	Super::NetProgress(count);
 }
 
-//==========================================================================
-//
-//
-//
-//==========================================================================
-
-void FStrifeStartupScreen::SetWindowSize()
+void FGraphicalStartupScreen::NetDone()
 {
-	ST_Util_SizeWindowForBitmap(2);
-	LayoutMainWindow(Window, NULL);
-	InvalidateRect(StartupScreen, NULL, TRUE);
+	renderer->NetDone();
+	Super::NetDone();
 }
 
 //==========================================================================
@@ -508,44 +512,21 @@ void FStrifeStartupScreen::SetWindowSize()
 
 int RunEndoom()
 {
-	if (showendoom == 0 || endoomName.Len() == 0) 
-	{
-		return 0;
-	}
-
-	int endoom_lump = fileSystem.CheckNumForFullName (endoomName, true);
-
-	uint8_t endoom_screen[4000];
 	MSG mess;
 	BOOL bRet;
-	bool blinking = false, blinkstate = false;
-	int i;
-
-	if (endoom_lump < 0 || fileSystem.FileLength (endoom_lump) != 4000)
-	{
-		return 0;
-	}
-
-	if (fileSystem.GetFileContainer(endoom_lump) == fileSystem.GetMaxIwadNum() && showendoom == 2)
-	{
-		// showendoom==2 means to show only lumps from PWADs.
-		return 0;
-	}
 
 	if (!ST_Util_CreateStartupWindow())
 	{
 		return 0;
 	}
 
-	I_ShutdownGraphics ();
-	RestoreConView ();
-	S_StopMusic(true);
+	I_ShutdownGraphics();
+	RestoreConView();
 
-	fileSystem.ReadFile (endoom_lump, endoom_screen);
-
-	// Draw the loading screen to a bitmap.
-	StartupBitmap = ST_Util_AllocTextBitmap();
-	ST_Util_DrawTextScreen (StartupBitmap, endoom_screen);
+	int hr;
+	// Draw the endoom screen to a bitmap.
+	auto endoom = new FEndoomScreen(ST_Util_InvalidateRect, &hr);
+	if (hr < 0) return 0;
 
 	// Make the title banner go away.
 	if (GameTitleWindow != NULL)
@@ -554,19 +535,11 @@ int RunEndoom()
 		GameTitleWindow = NULL;
 	}
 
-	ST_Util_SizeWindowForBitmap (1);
+	ST_Util_SizeWindowForBitmap (1, endoom->StartupBitmap);
 	LayoutMainWindow (Window, NULL);
 	InvalidateRect (StartupScreen, NULL, TRUE);
 
-	// Does this screen need blinking?
-	for (i = 0; i < 80*25; ++i)
-	{
-		if (endoom_screen[1+i*2] & 0x80)
-		{
-			blinking = true;
-			break;
-		}
-	}
+	auto blinking = endoom->Blinking();
 	if (blinking && SetTimer (Window, 0x5A15A, BLINK_PERIOD, NULL) == 0)
 	{
 		blinking = false;
@@ -583,13 +556,11 @@ int RunEndoom()
 			{
 				KillTimer (Window, 0x5A15A);
 			}
-			ST_Util_FreeBitmap (StartupBitmap);
 			return int(bRet == 0 ? mess.wParam : 0);
 		}
 		else if (blinking && mess.message == WM_TIMER && mess.hwnd == Window && mess.wParam == 0x5A15A)
 		{
-			ST_Util_UpdateTextBlink (StartupBitmap, endoom_screen, blinkstate);
-			blinkstate = !blinkstate;
+			endoom->Blink();
 		}
 		TranslateMessage (&mess);
 		DispatchMessage (&mess);
@@ -634,7 +605,7 @@ bool ST_Util_CreateStartupWindow ()
 //
 //==========================================================================
 
-void ST_Util_SizeWindowForBitmap (int scale)
+void ST_Util_SizeWindowForBitmap (int scale, BitmapInfo* StartupBitmap)
 {
 	DEVMODE displaysettings;
 	int w, h, cx, cy, x, y;
@@ -683,28 +654,3 @@ void ST_Util_SizeWindowForBitmap (int scale)
 	MoveWindow (Window, x, y, w, h, TRUE);
 }
 
-//==========================================================================
-//
-// ST_Util_InvalidateRect
-//
-// Invalidates the portion of the window that the specified rect of the
-// bitmap appears in.
-//
-//==========================================================================
-
-void ST_Util_InvalidateRect (HWND hwnd, BitmapInfo *bitmap_info, int left, int top, int right, int bottom)
-{
-	RECT rect;
-
-	GetClientRect (hwnd, &rect);
-	rect.left = left * rect.right / bitmap_info->bmiHeader.biWidth - 1;
-	rect.top = top * rect.bottom / bitmap_info->bmiHeader.biHeight - 1;
-	rect.right = right * rect.right / bitmap_info->bmiHeader.biWidth + 1;
-	rect.bottom = bottom * rect.bottom / bitmap_info->bmiHeader.biHeight + 1;
-	InvalidateRect (hwnd, &rect, FALSE);
-}
-
-void ST_Util_InvalidateRect(BitmapInfo* bitmap_info, int left, int top, int right, int bottom)
-{
-	ST_Util_InvalidateRect(StartupScreen , bitmap_info, left, top, right, bottom);
-}

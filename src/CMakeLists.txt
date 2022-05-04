@@ -446,7 +446,6 @@ set( PLAT_WIN32_SOURCES
 	common/platform/win32/i_system.cpp
 	common/platform/win32/i_specialpaths.cpp
 	common/platform/win32/st_start.cpp
-	common/platform/win32/st_start_util.cpp
 	common/platform/win32/gl_sysfb.cpp
 	common/platform/win32/base_sysfb.cpp
 	common/platform/win32/win32basevideo.cpp
@@ -621,6 +620,7 @@ file( GLOB HEADER_FILES
 	common/textures/hires/hqnx/*.h
 	common/textures/hires/hqnx_asm/*.h
 	common/textures/hires/xbr/*.h
+	common/startscreen/*.h
 	common/thirdparty/*.h
 	common/thirdparty/rapidjson/*.h
 	common/thirdparty/math/*h
@@ -1164,6 +1164,7 @@ set (PCH_SOURCES
 	common/menu/menudef.cpp
 	common/menu/savegamemanager.cpp
 	common/statusbar/base_sbar.cpp
+	common/startscreen/st_graphical.cpp
 	
 	common/rendering/v_framebuffer.cpp
 	common/rendering/v_video.cpp
@@ -1292,6 +1293,7 @@ include_directories( .
 	common/audio/music
 	common/2d
 	common/cutscenes
+	common/startscreen
 	common/thirdparty/libsmackerdec/include
 	common/thirdparty
 	common/textures

@@ -3152,7 +3152,7 @@ static int D_InitGame(const FIWADInfo* iwad_info, TArray<FString>& allwads, TArr
 	}
 	else
 	{
-		StartScreen = new FStartupScreen(0);
+		StartScreen = new FStartupScreen();
 	}
 
 	CheckCmdLine();

@@ -35,18 +35,14 @@
 ** Actual implementation is system-specific.
 */
 #include <stdint.h>
+#include "st_graphical.h"
+
+struct BitmapInfo;
 
 class FStartupScreen
 {
 public:
 	static FStartupScreen *CreateInstance(int max_progress);
-
-	FStartupScreen(int max_progress)
-	{
-		MaxPos = max_progress;
-		CurPos = 0;
-		NotchPos = 0;
-	}
 
 	virtual ~FStartupScreen() = default;
 
@@ -54,14 +50,12 @@ public:
 
 	virtual void NetInit(const char *message, int num_players) {}
 	virtual void NetProgress(int count) {}
-	virtual void NetMessage(const char *format, ...) {}	// cover for printf
 	virtual void NetDone() {}
 	virtual bool NetLoop(bool (*timer_callback)(void *), void *userdata) { return false; }
+	virtual void NetMessage(const char* format, ...) {}
 	virtual void AppendStatusLine(const char* status) {}
 	virtual void LoadingStatus(const char* message, int colors) {}
-
-protected:
-	int MaxPos, CurPos, NotchPos;
+	virtual BitmapInfo* GetBitmap() { return nullptr; }
 };
 
 class FBasicStartupScreen : public FStartupScreen
@@ -79,59 +73,22 @@ public:
 protected:
 	long long NetMarqueeMode;
 	int NetMaxPos, NetCurPos;
+	int MaxPos, CurPos;
 };
 
 class FGraphicalStartupScreen : public FBasicStartupScreen
 {
+	using Super = FBasicStartupScreen;
+	FGraphicalStartupScreenRenderer* renderer;
 public:
-	FGraphicalStartupScreen(int max_progress);
+	FGraphicalStartupScreen(int max_progress, FGraphicalStartupScreenRenderer* scr);
 	~FGraphicalStartupScreen();
+	BitmapInfo* GetBitmap() override { return renderer->StartupBitmap; }
+	void NetInit(const char* message, int num_players) override;
+	void NetProgress(int count) override;
+	void NetDone() override;
 };
 
-class FHereticStartupScreen : public FGraphicalStartupScreen
-{
-public:
-	FHereticStartupScreen(int max_progress, long &hr);
-
-	void Progress();
-	void LoadingStatus(const char *message, int colors);
-	void AppendStatusLine(const char *status);
-protected:
-	void SetWindowSize();
-
-	int ThermX, ThermY, ThermWidth, ThermHeight;
-	int HMsgY, SMsgX;
-};
-
-class FHexenStartupScreen : public FGraphicalStartupScreen
-{
-public:
-	FHexenStartupScreen(int max_progress, long &hr);
-	~FHexenStartupScreen();
-
-	void Progress();
-	void NetProgress(int count);
-	void NetDone();
-	void SetWindowSize();
-
-	// Hexen's notch graphics, converted to chunky pixels.
-	uint8_t * NotchBits;
-	uint8_t * NetNotchBits;
-};
-
-class FStrifeStartupScreen : public FGraphicalStartupScreen
-{
-public:
-	FStrifeStartupScreen(int max_progress, long &hr);
-	~FStrifeStartupScreen();
-
-	void Progress();
-protected:
-	void DrawStuff(int old_laser, int new_laser);
-	void SetWindowSize();
-
-	uint8_t *StartupPics[4+2+1];
-};
 
 
 
@@ -141,52 +98,6 @@ void DeleteStartupScreen();
 extern void ST_Endoom();
 
 // The entire set of functions here uses native Windows types. These are recreations of those types so that the code doesn't need to be changed more than necessary
-
-struct BitmapInfoHeader 
-{
-	uint32_t      biSize;
-	int32_t       biWidth;
-	int32_t       biHeight;
-	uint16_t      biPlanes;
-	uint16_t      biBitCount;
-	uint32_t      biCompression;
-	uint32_t      biSizeImage;
-	int32_t       biXPelsPerMeter;
-	int32_t       biYPelsPerMeter;
-	uint32_t      biClrUsed;
-	uint32_t      biClrImportant;
-};
-
-struct RgbQuad 
-{
-	uint8_t    rgbBlue;
-	uint8_t    rgbGreen;
-	uint8_t    rgbRed;
-	uint8_t    rgbReserved;
-};
-
-
-struct BitmapInfo 
-{
-	BitmapInfoHeader    bmiHeader;
-	RgbQuad             bmiColors[1];
-};
-
-extern BitmapInfo* StartupBitmap;
-
-
-void ST_Util_PlanarToChunky4(uint8_t* dest, const uint8_t* src, int width, int height);
-void ST_Util_DrawBlock(BitmapInfo* bitmap_info, const uint8_t* src, int x, int y, int bytewidth, int height);
-void ST_Util_DrawBlock4(BitmapInfo* bitmap_info, const uint8_t* src, int x, int y, int bytewidth, int height);
-void ST_Util_ClearBlock(BitmapInfo* bitmap_info, uint8_t fill, int x, int y, int bytewidth, int height);
-BitmapInfo* ST_Util_CreateBitmap(int width, int height);
-uint8_t* ST_Util_BitsForBitmap(BitmapInfo* bitmap_info);
-void ST_Util_FreeBitmap(BitmapInfo* bitmap_info);
-void ST_Util_BitmapColorsFromPlaypal(BitmapInfo* bitmap_info);
-BitmapInfo* ST_Util_AllocTextBitmap();
-void ST_Util_DrawTextScreen(BitmapInfo* bitmap_info, const uint8_t* text_screen);
-int ST_Util_DrawChar(BitmapInfo* screen, int x, int y, unsigned charnum, uint8_t attrib);
-void ST_Util_UpdateTextBlink(BitmapInfo* bitmap_info, const uint8_t* text_screen, bool on);
 
 
 //===========================================================================
